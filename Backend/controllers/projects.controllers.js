@@ -1,5 +1,28 @@
 const Project= require('../models/projects.model');
 
+const getProjectImageByIndex = async (req, res) => {
+  try {
+    const { id, imageIndex } = req.params;
+    const project = await Project.findById(id);
+    if (!project || !project.images || project.images.length === 0) {
+      return res.status(404).send("No images found for this project");
+    }
+
+    // Convert imageIndex to a number
+    const idx = parseInt(imageIndex, 10);
+    if (idx < 0 || idx >= project.images.length) {
+      return res.status(404).send("Image index out of range");
+    }
+
+    const image = project.images[idx];
+    res.set("Content-Type", image.contentType);
+    res.send(image.data);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send(error.message);
+  }
+};
+
 const getProjects = async (req, res) => {
     try {
       const projects = await Project.find({});
@@ -24,45 +47,29 @@ const getProjects = async (req, res) => {
     }
   };
 
-  const getProjectImage = async (req, res) => {
-    try {
-      const { id } = req.params;
-      const project = await Project.findById(id);
-      if (!project || !project.image || !project.image.data) {
-        return res.status(404).send("No image found for this project");
-      }
-      // Set the proper content type (e.g., image/png)
-      res.set("Content-Type", project.image.contentType);
-      res.send(project.image.data);
-    } catch (error) {
-      console.error(error);
-      res.status(500).send(error.message);
-    }
-  };
-
   const createProject = async (req, res) => {
-    console.log("Received request to create a project:", req.body);
     try {
-      console.log("File info:", req.file);
-      console.log("Body info:", req.body);
+      // Body data
+      const { name, description, timeTaken, cost, categories } = req.body;
   
-      // Create an object for Project based on req.body 
-      // and the image data for the file provided
       const newProjectData = {
-        name: req.body.name,
-        description: req.body.description,
-        timeTaken: req.body.timeTaken,
-        cost: req.body.cost,
-        categories: req.body.categories || [],
+        name,
+        description,
+        timeTaken,
+        cost,
+        categories: Array.isArray(categories) ? categories : [categories],
+        images: [],
       };
   
-      // If a file was uploaded, attach it
-      if (req.file) {
-        newProjectData.image = {
-          data: req.file.buffer,
-          contentType: req.file.mimetype
-        };
+      // If files were uploaded, attach them
+      // req.files is an array of up to 5 images
+      if (req.files && req.files.length > 0) {
+        newProjectData.images = req.files.map(file => ({
+          data: file.buffer,
+          contentType: file.mimetype,
+        }));
       }
+  
       const project = await Project.create(newProjectData);
       res.status(200).json(project);
     } catch (error) {
@@ -73,33 +80,40 @@ const getProjects = async (req, res) => {
   const updateProject = async (req, res) => {
     try {
       const { id } = req.params;
-
-      let updates = {
-        name: req.body.name,
-        description: req.body.description,
-        timeTaken: req.body.timeTaken,
-        cost: req.body.cost,
-        categories: req.body.categories || [],
-      };
+      const { name, description, timeTaken, cost, categories } = req.body;
       
-      if (req.file) {
-        updates.image = {
-          data: req.file.buffer,
-          contentType: req.file.mimetype
-        };
-      }
-
-      const project = await Project.findByIdAndUpdate(id, req.body, { new: true });
-  
+      // Fetch the existing project
+      const project = await Project.findById(id);
       if (!project) {
         return res.status(404).json({ message: "Project not found" });
       }
       
+      // Update basic fields and categories
+      project.name = name;
+      project.description = description;
+      project.timeTaken = timeTaken;
+      project.cost = cost;
+      project.categories = Array.isArray(categories) ? categories : [categories];
+      
+      // For each of the 5 image slots, update only if there is a new file.
+      for (let i = 0; i < 5; i++) {
+        const fieldName = `image_${i}`;
+        if (req.files && req.files[fieldName] && req.files[fieldName].length > 0) {
+          project.images[i] = {
+            data: req.files[fieldName][0].buffer,
+            contentType: req.files[fieldName][0].mimetype,
+          };
+        }
+        // If no new file for slot i is provided, retain project.images[i] (even if it might be undefined)
+      }
+      
+      await project.save();
       res.status(200).json(project);
     } catch (error) {
       res.status(500).json({ message: error.message });
     }
   };
+  
   
   const deleteProject = async (req, res) => {
     try {
@@ -116,11 +130,32 @@ const getProjects = async (req, res) => {
     }
   };
   
+  const deleteProjectImage = async (req, res) => {
+    try {
+      const { id, imageIndex } = req.params;
+      const project = await Project.findById(id);
+      if (!project) {
+        return res.status(404).json({ message: "Project not found" });
+      }
+      const index = parseInt(imageIndex, 10);
+      if (isNaN(index) || index < 0 || index >= project.images.length) {
+        return res.status(400).json({ message: "Invalid image index" });
+      }
+      project.images.splice(index, 1); // remove the selected image
+      await project.save();
+      res.status(200).json({ message: "Image deleted successfully" });
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  };
+  
+
   module.exports = {
     getProjects,
     getProject,
     createProject,
     updateProject,
     deleteProject,
-    getProjectImage,
+    getProjectImageByIndex,
+    deleteProjectImage,
   };
